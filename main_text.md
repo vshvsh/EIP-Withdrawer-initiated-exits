@@ -23,19 +23,25 @@ The sequence of operations for triggering an exit is divided into two parts: fir
 
 ### Exit initiation smart contract
 The dedicated contract sequentially checks the following conditions:
-1. The last exit request from this validator was at least `WITHDRAWER_EXIT_ATTEMPTS_INTERVAL` blocks ago.
+1. The last exit request from this validator was at least `WITHDRAWER_EXIT_REQUEST_INTERVAL` blocks ago.
 2. The number of successful executions of the function for the current block does not exceed the limitation (`MAX_EXIT_REQUESTS`).
 3. The msg.sender address corresponds to the specified validator's withdrawal credentials.
 4. The validator is active and mature enough to initiate an exit: the time elapsed since activation exceeds `SHARD_COMMITTEE_PERIOD` epochs (which is 256 epochs ~ 27 hours for now).
 
-If all conditions are fulfilled, the contract emits an event `WithdrawerExitRequest`, stores an information about a new exit attempt in an array and this array's hash, and updates a state variables.
+If all conditions are fulfilled, the contract emits an event `WithdrawerExitRequest`, stores an information about a new exit attempt in an array.
 
 ### Processing an event
 
-When the consensus layer client has recieved a block that has `WithdrawerExitRequest` blob in it, first of all it authenticates that it matches the consensus over eth1_data. 
+When a proposer makes a block, they include in the eth1_data part of a block a hash of all exit requests made in an eth1 block that is tracked in eth1_data.block_hash structure. That hash can be queried with a call to the smart contract below. It also has to include a list of all exit requests from the same execution layer block, which is also queryable from the smart contract. 
+
+SIC! ^doesn't work apparently. eth1 data is per epoch
 
 
-When there's a time to process an individual request, the client checks the state of a validator named in a request to make sure that it is not already exited, is active, and the withdrawal credentials match the withdrawerAddress. It is imperative to do that check on the consensus side, despite all of this being checked in smart contract previously: beacon chain is the primary source of authority on whether processing an exit is allowed or not. The most obvious reason it matters is that execution layer data appears on beacon chain with multiple hours delay (TODO+ concrete constants names), and the validator state checked previously might change in that time period.
+When the consensus layer client has recieved a block that has `WithdrawerExitRequest` blob in it, first of all it authenticates that it matches the consensus over eth1_data by comparing the hash of the blob to the hash in eth1_data.
+
+
+When processing an individual requests, the client checks the state of a validator named in a request to make sure that it is not already exited, is active, and the withdrawal credentials match the withdrawerAddress. It is imperative to do that check on the consensus side, despite all of this being checked in smart contract previously: beacon chain is the primary source of authority on whether processing an exit is allowed or not. The most obvious reason it matters is that execution layer data appears on beacon chain with multiple hours delay (ETH1_FOLLOW_DISTANCE execution layer blocks + EPOCHS_PER_ETH1_VOTING_PERIOD epochs ago), and the validator state checked previously might change in that time period.
+
 
 The less obvious are that there might be a bug in the smart contract or on the execution layer as a whole or requirements on the consensus layer might change with the upgrade (see the “Other considerations” section below).
 
@@ -73,7 +79,7 @@ contract ExitContract is IExitContract {
     // on a long enough time horizon beacon chain constants and possibly validator 
     // exit processing logic will diverge from what's fixed on the execution layer
     uint256 constant MAX_EXIT_REQUESTS = 16;
-    uint256 constant WITHDRAWER_EXIT_ATTEMPTS_INTERVAL = 1024;
+    uint256 constant WITHDRAWER_EXIT_REQUEST_INTERVAL = 1024;
     uint256 constant SHARD_COMMITTEE_PERIOD = 256;
 
     mapping(bytes => uint256) private attempted_at;       // validator’s pubkey => block number
