@@ -6,29 +6,25 @@ Introduce a new type of message from a dedicated smart contract on execution lay
 
 ## Motivation
 
-Currently, control over withdrawal credentials doesn't provide the capability to initiate the validator exit and withdraw the funds. This goes against the needs and intuitive rights of stake owners, and creates difficulties for delegated staking solutions. The methods used to circumvent these problems - such as presigned voluntary exit requests - are cumbersome to implement safely or trustlessly. Thus it seems important that withdrawer exits get enabled in the Ethereum protocol.
+Currently, control over withdrawal credentials doesn't provide the capability to initiate the validator exit and withdraw the funds. This goes against the needs and intuitive rights of stake owners, and creates difficulties for delegated staking solutions. The methods used to circumvent these problems - such as presigned voluntary exit requests - are cumbersome to implement safely or trustlessly. Thus it seems important that withdrawer initiated exits get enabled in the Ethereum protocol.
 
 
 ## Solution
 
-We propose to use a similar mechanism as is used for deposits to initiate the exits by 0x01 withdrawal credentials. To make sure the beacon chain is not DoSed by exit requests, we propose to implement a set of validity checks on the execution layer and set a limit to the number of valid exit attempts per block. If all validity checks are passed, a message is emitted on EL as an EVM event from a smart contract. Then the request is parsed and processed on a beacon chain client just like DepositEvent from DepositContract is processed.
+We propose to use a similar mechanism as is used for deposits to initiate the exits by 0x01 withdrawal credentials. To make sure the beacon chain is not DoSed by exit requests, we propose to implement a reasonably sized fee that returns to a withdrawer in a happy path but is burned in a DoS attempt. On a exit initiation attempt a message is emitted on EL as an EVM event from a smart contract. Then the request is parsed and processed on a beacon chain client similarly to the way DepositEvent from DepositContract is proposed to be processed by [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110).
 
 One difference from a deposit contract is that we propose this event to be a request from the execution layer to consensus layer that is not guaranteed to succeed. The reason for this is that making execution layer request a guaranteed success would require a tighter coupling between execution layer and consensus layer thaт we think is desirable.
 
-The other difference is in the storage structure for exit requests. Just like events from deposit contract, withdrawer initiated exit requests' events need to be validatable even in the absence of access to execution layer blocks' data, e.g. in case Ethereum implements [EIP-4444](https://eips.ethereum.org/EIPS/eip-4444). That means that consensus layer needs to store some data to authenticate the validity of requests. Unlike deposit messages, exit requests themselves do not need a permanent append-only data structure, so we defaulted to putting a hash of all of relevant blocks' exit requests messages to the blocks' eth1_data. The array of exit requests and `exit_requests_hash` can be cleared for each new block. The goal is to give a possibility for future verification of all logged exit requests without access to the execution layer data: "enough validators back in the day signed that data".
+The other difference is in the storage structure for exit requests. Just like events from deposit contract, withdrawer initiated exit requests' events need to be validatable even in the absence of access to execution layer blocks' data, e.g. in case Ethereum implements [EIP-4444](https://eips.ethereum.org/EIPS/eip-4444). That means that consensus layer needs to store some data to authenticate the validity of requests. Unlike deposit messages, exit requests themselves do not need a permanent append-only data structure, so we do not propose to store them in a full historical merkle tree. The goal is to give a possibility for future verification of all logged exit requests without access to the execution layer data: "enough validators back in the day signed that data".
 
 ## Specification
 
-The sequence of operations for triggering an exit is divided into two parts: first, pre-checks implemented in the smart contract and emission of an event, and then the event processing on the beacon chain client.
+The sequence of operations for triggering an exit is divided into two parts: first, pre-checks implemented in the smart contract, locking of ETH, and emission of an event. Second, the event processing on the beacon chain client.
 
 ### Exit initiation smart contract
-The dedicated contract sequentially checks the following conditions:
-1. The last exit request from this validator was at least `WITHDRAWER_EXIT_REQUEST_INTERVAL` blocks ago.
-2. The number of successful executions of the function for the current block does not exceed the limitation (`MAX_EXIT_REQUESTS`).
-3. The msg.sender address corresponds to the specified validator's withdrawal credentials.
-4. The validator is active and mature enough to initiate an exit: the time elapsed since activation exceeds `SHARD_COMMITTEE_PERIOD` epochs (which is 256 epochs ~ 27 hours for now).
+The dedicated contract checks that the number of successful executions of the function for the current block does not exceed the limitation (`MAX_EXIT_REQUESTS`).
 
-If all conditions are fulfilled, the contract emits an event `WithdrawerExitRequest`, stores an information about a new exit attempt in an array.
+If so, the contract locks emits an event `WithdrawerExitRequest`, stores an information about a new exit attempt in an array.
 
 ### Processing an event
 
